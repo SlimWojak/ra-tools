@@ -1,0 +1,320 @@
+{
+  "week": "2025-W43",
+  "params": {
+    "schema_version": "1.0",
+    "instrument": "EURUSD",
+    "primitives": {
+      "fvg": {
+        "floor_threshold_pips": 0.5
+      },
+      "swing_points": {
+        "N": {
+          "1m": 5,
+          "5m": 3,
+          "15m": 2
+        },
+        "height_filter_pips": {
+          "1m": 0.5,
+          "5m": 3,
+          "15m": 3
+        },
+        "strength_cap": 20,
+        "strength_as_gate": false
+      },
+      "displacement": {
+        "atr_period": 14,
+        "combination_mode": "AND",
+        "ltf": {
+          "applies_to": [
+            "1m",
+            "5m",
+            "15m"
+          ],
+          "atr_multiplier": 1.5,
+          "body_ratio": 0.6,
+          "close_gate": 0.25,
+          "structure_close_required": false
+        },
+        "htf": {
+          "applies_to": [
+            "1H",
+            "4H",
+            "1D"
+          ],
+          "atr_multiplier": 1.5,
+          "body_ratio": 0.65,
+          "close_gate": 0.25,
+          "structure_close_required": true
+        },
+        "decisive_override": {
+          "enabled": true,
+          "body_min": 0.75,
+          "close_max": 0.1,
+          "pip_floor": {
+            "1m": 3,
+            "5m": 5,
+            "15m": 6,
+            "1H": 8,
+            "4H": 15,
+            "1D": 20
+          }
+        },
+        "cluster": {
+          "cluster_2_enabled": true,
+          "cluster_3_enabled": false,
+          "net_efficiency_min": 0.65,
+          "overlap_max": 0.35
+        }
+      },
+      "session_liquidity": {
+        "four_gate_model": {
+          "efficiency_threshold": 0.6,
+          "mid_cross_min": 2,
+          "balance_score_min": 0.3
+        },
+        "box_objects": {
+          "asia": {
+            "window": {
+              "start_ny": "19:00",
+              "end_ny": "00:00"
+            },
+            "range_cap_pips": 30
+          },
+          "pre_london": {
+            "window": {
+              "start_ny": "00:00",
+              "end_ny": "02:00"
+            },
+            "range_cap_pips": 15
+          },
+          "pre_ny": {
+            "window": {
+              "start_ny": "05:00",
+              "end_ny": "07:00"
+            },
+            "range_cap_pips": 20
+          }
+        }
+      },
+      "asia_range": {
+        "classification": {
+          "tight_below_pips": 10,
+          "mid_below_pips": 20,
+          "wide_above_pips": 20
+        },
+        "max_cap_pips": 30,
+        "thresholds": [
+          12,
+          15,
+          18,
+          20,
+          25,
+          30
+        ]
+      },
+      "mss": {
+        "ltf": {
+          "applies_to": [
+            "1m",
+            "5m",
+            "15m"
+          ],
+          "displacement_required": true,
+          "confirmation_window_bars": 3,
+          "close_beyond_swing": true,
+          "impulse_suppression": {
+            "pullback_reset_pips": 5,
+            "pullback_reset_atr_factor": 0.25,
+            "opposite_displacement_reset": true,
+            "new_day_reset": true
+          }
+        },
+        "htf": {
+          "applies_to": [
+            "1H",
+            "4H",
+            "1D"
+          ],
+          "displacement_required": true,
+          "confirmation_window_bars": 1,
+          "close_beyond_swing": true,
+          "structure_close_required": true,
+          "impulse_suppression": {
+            "pullback_reset_pips": 5,
+            "pullback_reset_atr_factor": 0.25,
+            "opposite_displacement_reset": true,
+            "new_day_reset": true
+          }
+        },
+        "fvg_tag_only": true,
+        "break_classification": [
+          "REVERSAL",
+          "CONTINUATION"
+        ],
+        "swing_consumption": true
+      },
+      "order_block": {
+        "trigger": "displacement_plus_mss",
+        "zone_type": "body",
+        "thin_candle_filter": {
+          "min_body_pct": 0.1
+        },
+        "fallback_scan": {
+          "mode": "ENABLED_CONDITIONAL",
+          "lookback_bars": 3,
+          "reject_if_none_found": true
+        },
+        "expiration_bars": {
+          "1m": 10,
+          "5m": 10,
+          "15m": 10,
+          "1H": 15,
+          "4H": 20,
+          "1D": 20
+        },
+        "min_displacement_grade": "VALID"
+      },
+      "liquidity_sweep": {
+        "return_window_bars": 1,
+        "rejection_wick_pct": 0.4,
+        "min_breach_pips": {
+          "1m": 0.5,
+          "5m": 0.5,
+          "15m": 1
+        },
+        "min_reclaim_pips": {
+          "1m": 0.5,
+          "5m": 0.5,
+          "15m": 1
+        },
+        "max_sweep_size_atr_mult": 1.5,
+        "directional_close": false,
+        "level_sources": {
+          "pdh_pdl": {
+            "enabled": true
+          },
+          "asia_h_l": {
+            "enabled": true,
+            "valid_after_ny": "00:00"
+          },
+          "london_h_l": {
+            "enabled": true,
+            "valid_after_ny": "05:00"
+          },
+          "ltf_box_h_l": {
+            "enabled": true,
+            "valid_after": "box_end_time"
+          },
+          "htf_eqh_eql": {
+            "enabled": true
+          },
+          "pwh_pwl": {
+            "enabled": true,
+            "valid_after_ny": "17:00 Monday"
+          },
+          "promoted_swing": {
+            "enabled": true,
+            "strength_min": 10,
+            "height_pips_min": 10,
+            "scope": "current_forex_day_only",
+            "staleness_bars": 20
+          },
+          "raw_previous_swings": {
+            "enabled": false
+          },
+          "equal_hl": {
+            "enabled": false,
+            "note": "DEFERRED"
+          },
+          "pmh_pml": {
+            "enabled": false,
+            "note": "FUTURE_PHASE"
+          }
+        },
+        "level_merge_tolerance_pips": 1,
+        "qualified_sweep": {
+          "displacement_before_lookback": 10,
+          "displacement_after_forward": 5
+        },
+        "delayed_sweep": {
+          "enabled": true,
+          "min_delayed_wick_pct": 0.3,
+          "max_delay_bars": 1
+        }
+      },
+      "htf_liquidity": {
+        "detection_source": "swing_points_fractal_2_2",
+        "price_tolerance_pips": {
+          "1H": 2,
+          "4H": 3,
+          "1D": 5,
+          "W1": 10,
+          "MN": 15
+        },
+        "min_bars_between_touches": {
+          "1H": 6,
+          "4H": 3,
+          "1D": 2,
+          "W1": 2,
+          "MN": 2
+        },
+        "rotation_required": {
+          "1H": {
+            "pip_floor": 5,
+            "atr_factor": 0.25
+          },
+          "4H": {
+            "pip_floor": 8,
+            "atr_factor": 0.25
+          },
+          "1D": {
+            "pip_floor": 12,
+            "atr_factor": 0.25
+          },
+          "W1": {
+            "pip_floor": 20,
+            "atr_factor": 0.25
+          },
+          "MN": {
+            "pip_floor": 30,
+            "atr_factor": 0.25
+          }
+        },
+        "max_lookback": {
+          "1H": 500,
+          "4H": 300,
+          "1D": 180,
+          "W1": 104,
+          "MN": 60
+        },
+        "asia_range_filter": true,
+        "invalidation_during_formation": true,
+        "merge_tolerance_factor": 1.5,
+        "min_touches": 2
+      },
+      "ote": {
+        "fib_levels": {
+          "lower": 0.618,
+          "sweet_spot": 0.705,
+          "upper": 0.79
+        },
+        "anchor_rule": "most_recent_mss",
+        "kill_zone_gate": true
+      },
+      "reference_levels": {
+        "pdh_pdl": {
+          "boundary": "forex_day",
+          "measurement": "wicks"
+        },
+        "midnight_open": {
+          "time_ny": "00:00"
+        },
+        "equilibrium": {
+          "formula": "midpoint"
+        }
+      }
+    }
+  },
+  "notes": "Test lock record for VAL-UI-018 validation",
+  "recorded_at": "2026-03-09T12:02:55.400Z"
+}

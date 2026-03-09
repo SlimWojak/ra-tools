@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>a8ra Research Accelerator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0e17;
+    --surface: #131722;
+    --surface-2: #1e222d;
+    --border: #2a2e39;
+    --text: #d1d4dc;
+    --text-muted: #787b86;
+    --text-faint: #4a4e59;
+    --teal: #26a69a;
+    --red: #ef5350;
+    --blue: #2962ff;
+    --yellow: #f7c548;
+    --purple: #9c27b0;
+    --font: 'IBM Plex Sans', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .header {
+    padding: 48px 40px 32px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-inner {
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .logo-mark {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--teal), var(--blue));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 18px;
+    color: #fff;
+  }
+
+  .logo-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+  }
+
+  .subtitle {
+    font-size: 15px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    max-width: 680px;
+  }
+
+  .main {
+    flex: 1;
+    padding: 40px;
+    max-width: 1080px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 28px;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 0.18s ease, background 0.18s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 520px;
+    margin-bottom: 32px;
+  }
+
+  .card:hover {
+    border-color: var(--blue);
+    background: var(--surface-2);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card-letter {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-faint);
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.04);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .card-priority {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(38,166,154,0.12);
+    color: var(--teal);
+  }
+
+  .card-title {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .card-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .card-meta {
+    display: flex;
+    gap: 16px;
+    margin-top: auto;
+    padding-top: 8px;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text-faint);
+  }
+
+  .card-meta span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .dot-teal { background: var(--teal); }
+  .dot-yellow { background: var(--yellow); }
+  .dot-blue { background: var(--blue); }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 16px;
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    max-width: 520px;
+  }
+
+  .data-table td {
+    padding: 8px 16px;
+    border-bottom: 1px solid rgba(42,46,57,0.5);
+    color: var(--text);
+  }
+
+  .data-table td:first-child {
+    color: var(--text-muted);
+    font-weight: 500;
+    width: 140px;
+  }
+
+  footer {
+    padding: 24px 40px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+
+  @media (max-width: 768px) {
+    .header { padding: 32px 20px 24px; }
+    .main { padding: 24px 20px; }
+    h1 { font-size: 22px; }
+    .card { max-width: 100%; }
+    .data-table { max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-mark">a8</div>
+      <div class="logo-text">Research Accelerator</div>
+    </div>
+    <h1>a8ra Research Accelerator</h1>
+    <p class="subtitle">
+      Validation mode for ICT primitive detection on EURUSD.
+      Browse detection results, toggle primitives, and label ground truth across 25 weeks of real market data.
+    </p>
+  </div>
+</div>
+
+<div class="main">
+
+  <a class="card" href="validate.html">
+    <div class="card-header">
+      <div class="card-letter">✓</div>
+      <div class="card-priority">Validation Mode</div>
+    </div>
+    <div class="card-title">Browse & Label Detections</div>
+    <div class="card-desc">
+      Browse 25 weeks of detection data week-by-week. Toggle individual primitives on/off,
+      inspect detections on candlestick charts, and label ground truth for export.
+      Covers displacement, FVG, swing points, and order blocks across three native timeframes.
+    </div>
+    <div class="card-meta">
+      <span><span class="dot dot-teal"></span> Week browser</span>
+      <span><span class="dot dot-yellow"></span> Ground truth</span>
+      <span><span class="dot dot-blue"></span> Label export</span>
+    </div>
+  </a>
+
+  <div class="section-label">Data Coverage</div>
+  <table class="data-table">
+    <tbody>
+      <tr><td>Pair</td><td>EURUSD</td></tr>
+      <tr><td>Period</td><td>Sep 2025 – Feb 2026</td></tr>
+      <tr><td>Resolution</td><td>1m / 5m / 15m — native TF detection</td></tr>
+      <tr><td>Detections</td><td>~97,834 total across 25 weeks</td></tr>
+    </tbody>
+  </table>
+
+</div>
+
+<footer>
+  a8ra
+</footer>
+
+</body>
+</html>

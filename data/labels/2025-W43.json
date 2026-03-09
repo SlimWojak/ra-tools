@@ -1,0 +1,29 @@
+[
+  {
+    "detection_id": "displacement_5m_2025-10-20T03:55:00_bear",
+    "primitive": "displacement",
+    "timeframe": "5m",
+    "direction": "bearish",
+    "label": "CORRECT",
+    "forex_day": "2025-10-20",
+    "labeled_at": "2026-03-09T11:55:21.660Z"
+  },
+  {
+    "detection_id": "displacement_5m_2025-10-20T05:50:00_bear",
+    "primitive": "displacement",
+    "timeframe": "5m",
+    "direction": "bearish",
+    "label": "NOISE",
+    "forex_day": "2025-10-20",
+    "labeled_at": "2026-03-09T11:56:23.952Z"
+  },
+  {
+    "detection_id": "displacement_5m_2025-10-20T07:05:00_bull",
+    "primitive": "displacement",
+    "timeframe": "5m",
+    "direction": "bullish",
+    "label": "BORDERLINE",
+    "forex_day": "2025-10-20",
+    "labeled_at": "2026-03-09T11:57:01.044Z"
+  }
+]
