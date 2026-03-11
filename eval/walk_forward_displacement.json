@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "config": "current_locked",
+  "primitive": "displacement",
+  "metric": "detection_count",
+  "window_config": {
+    "train_months": 3,
+    "test_months": 1,
+    "step_months": 1
+  },
+  "windows": [],
+  "summary": {
+    "windows_total": 0,
+    "windows_passed": 0,
+    "windows_failed": 0,
+    "mean_test_metric": 0.0,
+    "std_test_metric": 0.0,
+    "mean_delta": 0.0,
+    "worst_window": null,
+    "degradation_flag": false,
+    "pass_threshold_pct": 15.0,
+    "verdict": "STABLE"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "sweep_id": "sweep_displacement_ltf_atr_multiplier_20260309_164219",
+  "primitive": "displacement",
+  "variant": "a8ra_v1",
+  "dataset": "/Users/echopeso/research_accelerator/data/eurusd_1m_2024-01-07_to_2024-01-12.csv",
+  "metric": "detection_count",
+  "axes": {
+    "x": {
+      "param": "ltf.atr_multiplier",
+      "values": [
+        1.0,
+        1.25,
+        1.5,
+        1.75,
+        2.0,
+        2.5,
+        3.0
+      ]
+    },
+    "y": {
+      "param": "_single",
+      "values": [
+        0
+      ]
+    }
+  },
+  "grid": [
+    [
+      5247.0,
+      5247.0,
+      5247.0,
+      5247.0,
+      5247.0,
+      5247.0,
+      5247.0
+    ]
+  ],
+  "current_lock": {
+    "x": 1.5,
+    "y": 0,
+    "metric_value": 5247.0
+  },
+  "plateau": null,
+  "cliff_edges": []
+}
