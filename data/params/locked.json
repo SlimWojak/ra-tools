@@ -173,7 +173,11 @@
       "min_displacement_grade": "VALID"
     },
     "liquidity_sweep": {
-      "return_window_bars": 1,
+      "return_window_bars": {
+        "1m": 2,
+        "5m": 3,
+        "15m": 4
+      },
       "rejection_wick_pct": 0.4,
       "min_breach_pips": {
         "1m": 0.5,
@@ -235,9 +239,9 @@
         "displacement_after_forward": 5
       },
       "delayed_sweep": {
-        "enabled": true,
-        "min_delayed_wick_pct": 0.3,
-        "max_delay_bars": 1
+        "enabled": false,
+        "min_delayed_wick_pct": null,
+        "max_delay_bars": null
       }
     },
     "htf_liquidity": {

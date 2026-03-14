@@ -560,6 +560,13 @@
     text-overflow: ellipsis;
   }
 
+  .prim-marker-symbol {
+    font-size: 10px;
+    flex-shrink: 0;
+    width: 12px;
+    text-align: center;
+  }
+
   /* ── Detection Count Summary ─────────────────────────────────────────── */
 
   .detection-summary {
@@ -1626,6 +1633,19 @@
     white-space: nowrap;
   }
 
+  /* ── TF Selector (page-level) ────────────────────────────────────────── */
+
+  .tf-group { display: flex; gap: 4px; margin-left: 16px; align-items: center; }
+  .tf-btn {
+    font-family: var(--mono);
+    font-size: 11px; font-weight: 500; color: #787b86;
+    background: #0a0e17; border: 1px solid #2a2e39;
+    border-radius: 3px; padding: 3px 10px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tf-btn:hover { color: #d1d4dc; border-color: #4a4e59; }
+  .tf-btn.active { background: #2962ff; color: #fff; border-color: #2962ff; }
+
   /* ── Responsive ──────────────────────────────────────────────────────── */
 
   @media (max-width: 1280px) {
@@ -1668,6 +1688,7 @@
     <button class="tab-btn" data-tab="stats">Stats</button>
     <button class="tab-btn" data-tab="heatmap">Heatmap</button>
     <button class="tab-btn" data-tab="walkforward">Walk-Forward</button>
+    <div class="tf-group" id="compare-tf-group"></div>
   </div>
 
   <!-- Tab Content Area -->
@@ -1723,10 +1744,10 @@
 </div>
 
 <!-- Scripts -->
-<script src="js/shared.js"></script>
-<script src="js/chart-tab.js"></script>
-<script src="js/divergence.js"></script>
-<script src="js/stats-tab.js"></script>
+<script src="js/shared.js?v=1773217316"></script>
+<script src="js/chart-tab.js?v=1773217316"></script>
+<script src="js/divergence.js?v=1773213632"></script>
+<script src="js/stats-tab.js?v=1773213632"></script>
 <script src="js/heatmap-tab.js"></script>
 <script src="js/walkforward-tab.js"></script>
 <script src="js/ground-truth.js"></script>

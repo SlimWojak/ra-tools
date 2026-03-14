@@ -35,9 +35,11 @@ class SessionBandsRenderer {
       const ctx = scope.context;
       const H = scope.mediaSize.height;
       for (const b of this._bands) {
-        if (b.x1 == null || b.x2 == null) continue;
-        const xL = Math.min(b.x1, b.x2);
-        const xR = Math.max(b.x1, b.x2);
+        if (b.x1 == null && b.x2 == null) continue;
+        const rawL = b.x1 ?? 0;
+        const rawR = b.x2 ?? scope.mediaSize.width;
+        const xL = Math.min(rawL, rawR);
+        const xR = Math.max(rawL, rawR);
         if (xR < 0 || xL > scope.mediaSize.width) continue;
         // Fill
         ctx.fillStyle = b.color;
@@ -129,9 +131,8 @@ function filterDetectionsByDay(detections, dayKey) {
  * Returns the bar time (already toTS'd) or null.
  */
 function findNearestCandleTime(detTime, candleTimeSet, candleTimes) {
-  // Try exact match first (strip timezone suffix if any)
-  const cleanTime = detTime.includes('-05:00') ? detTime.replace('-05:00', '') :
-                    detTime.includes('+00:00') ? detTime.replace('+00:00', '') : detTime;
+  // Strip any timezone offset (e.g. -04:00, -05:00, +00:00) to get naive NY time
+  const cleanTime = detTime.replace(/[+-]\d{2}:\d{2}$/, '');
   const ts = toTS(cleanTime);
   if (ts != null && candleTimeSet.has(ts)) return ts;
   // Find nearest candle time (within 15 min)
@@ -175,19 +176,51 @@ function buildMarkers(candleTimesSet, candleTimesArr) {
       const dayDets = filterDetectionsByDay(tfData.detections, app.day);
 
       for (const det of dayDets) {
+        // Filter displacement to VALID+ grades only (WEAK/None are tagged but not display-worthy)
+        if (prim === 'displacement') {
+          const grade = det.properties && det.properties.quality_grade;
+          if (grade !== 'VALID' && grade !== 'STRONG' && grade !== 'DECISIVE') continue;
+        }
+
+        // Only render whitelisted liquidity_sweep types — all others are audit trail
+        const detType = det.properties && det.properties.type;
+        if (prim === 'liquidity_sweep' && detType !== 'SWEEP' && detType !== 'CONTINUATION') continue;
+
+        // Split liquidity_sweep continuations into their own toggle
+        const isContinuation = (prim === 'liquidity_sweep' && detType === 'CONTINUATION');
+        const effectivePrim = isContinuation ? 'sweep_continuation' : prim;
+
         const barTime = findNearestCandleTime(det.time, candleTimesSet, candleTimesArr);
         if (barTime == null) continue;
 
-        const isBullish = det.direction === 'bullish';
+        const dir = det.direction;
+        const pm = PRIMITIVE_MARKERS[effectivePrim];
+        let position, shape, markerColor, text;
+
+        if (pm) {
+          const isHigh = dir === 'high' || dir === 'bearish';
+          position = isHigh ? 'aboveBar' : 'belowBar';
+          shape = isHigh ? pm.shape_high : pm.shape_low;
+          markerColor = pm.color;
+          text = (prim === 'swing_points') ? (dir === 'high' ? 'SWH' : 'SWL')
+               : isContinuation ? 'C' : '';
+        } else {
+          const isBullish = dir === 'bullish' || dir === 'high';
+          position = isBullish ? 'belowBar' : 'aboveBar';
+          shape = isBullish ? 'arrowUp' : 'arrowDown';
+          markerColor = colors.base;
+          text = '';
+        }
+
         markers.push({
           time: barTime,
-          position: isBullish ? 'belowBar' : 'aboveBar',
-          shape: isBullish ? 'arrowUp' : 'arrowDown',
-          color: isBullish ? colors.base : colors.light,
+          position,
+          shape,
+          color: markerColor,
           size: 1,
-          text: '',
+          text,
           _config: configName,
-          _primitive: prim,
+          _primitive: effectivePrim,
           _detId: det.id,
         });
       }
@@ -318,11 +351,15 @@ function renderPrimitiveToggles(container) {
 
   for (const prim of PRIMITIVES) {
     const isOn = app.primitiveToggles[prim] !== false;
+    const pm = PRIMITIVE_MARKERS[prim];
+    const swatchColor = pm ? pm.color : 'var(--faint)';
+    const markerShape = pm ? _markerSymbol(pm.shape_low) : '\u25B2';
+
     const btn = document.createElement('button');
     btn.className = 'toggle-btn prim-toggle-btn' + (isOn ? ' active' : '');
     btn.dataset.primitive = prim;
     btn.title = isOn ? `Hide ${primLabel(prim)}` : `Show ${primLabel(prim)}`;
-    btn.textContent = primLabel(prim);
+    btn.innerHTML = `<span class="toggle-swatch" style="background:${isOn ? swatchColor : 'var(--faint)'}"></span><span class="prim-marker-symbol" style="color:${isOn ? swatchColor : 'var(--faint)'}">${markerShape}</span><span class="toggle-label">${primLabel(prim)}</span>`;
 
     btn.addEventListener('click', () => {
       app.primitiveToggles[prim] = !app.primitiveToggles[prim];
@@ -333,6 +370,16 @@ function renderPrimitiveToggles(container) {
   }
 
   container.appendChild(wrapper);
+}
+
+function _markerSymbol(shape) {
+  const map = {
+    'arrowUp': '\u25B2',
+    'arrowDown': '\u25BC',
+    'square': '\u25A0',
+    'circle': '\u25CF',
+  };
+  return map[shape] || '\u25CF';
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -359,7 +406,9 @@ function getDetectionCountsForDay() {
     }
 
     for (const prim of PRIMITIVES) {
-      const primData = configData.per_primitive[prim];
+      // sweep_continuation is a virtual primitive — counts from liquidity_sweep CONTINUATION type
+      const dataPrim = (prim === 'sweep_continuation') ? 'liquidity_sweep' : prim;
+      const primData = configData.per_primitive[dataPrim];
       if (!primData || !primData.per_tf) {
         result[configName][prim] = 0;
         continue;
@@ -369,7 +418,20 @@ function getDetectionCountsForDay() {
         result[configName][prim] = 0;
         continue;
       }
-      const dayDets = filterDetectionsByDay(tfData.detections, app.day);
+      let dayDets = filterDetectionsByDay(tfData.detections, app.day);
+      if (prim === 'displacement') {
+        dayDets = dayDets.filter(det => {
+          const g = det.properties && det.properties.quality_grade;
+          return g === 'VALID' || g === 'STRONG' || g === 'DECISIVE';
+        });
+      } else if (prim === 'sweep_continuation') {
+        dayDets = dayDets.filter(det => det.properties && det.properties.type === 'CONTINUATION');
+      } else if (prim === 'liquidity_sweep') {
+        dayDets = dayDets.filter(det => {
+          const t = det.properties && det.properties.type;
+          return t === 'SWEEP';
+        });
+      }
       result[configName][prim] = dayDets.length;
     }
   }
@@ -436,8 +498,9 @@ function renderDetectionSummary(container) {
 
 function getSessionBandsForDay(dayKey) {
   if (!app.sessionBoundaries) return [];
+  const VISIBLE_SESSIONS = new Set(['asia', 'lokz', 'nyokz']);
   return app.sessionBoundaries
-    .filter(b => b.forex_day === dayKey)
+    .filter(b => b.forex_day === dayKey && VISIBLE_SESSIONS.has(b.session))
     .map(b => ({
       startTS: toTS(b.start_time),
       endTS: toTS(b.end_time),
@@ -496,7 +559,7 @@ function renderDayTabs(container) {
  * TF Switching Buttons
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
-const TF_OPTIONS = ['1m', '5m', '15m'];
+const TF_OPTIONS = ['1m', '5m', '15m', '1H', '4H'];
 
 function renderTFButtons(container) {
   container.innerHTML = '';
@@ -509,6 +572,8 @@ function renderTFButtons(container) {
       if (tf === app.tf) return;
       app.tf = tf;
       renderTFButtons(container);
+      // Sync page-level TF buttons
+      if (typeof renderCompareTFButtons === 'function') renderCompareTFButtons();
       refreshChart();
     });
     container.appendChild(btn);
@@ -690,7 +755,7 @@ function renderVariantSelector(container) {
     html += '<select id="fixture-select" class="variant-select">';
     for (const f of fixtures) {
       const selected = f.key === (app.activeVariantFixture || 'default') ? ' selected' : '';
-      html += `<option value="${f.key}"${selected}>${f.label}</option>`;
+      html += `<option value="${f.key}"${selected}>${f.displayLabel || f.label}</option>`;
     }
     html += '</select>';
   }
