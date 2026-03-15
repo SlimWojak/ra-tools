@@ -9,10 +9,47 @@
 let _sChartCreated = false;
 let _sSessionPrimitive = null;
 let _sChainHighlightPrimitive = null;
-let _sAllMarkers = [];         // All built markers (unfiltered) for current day/tf
-let _sCandleTimeSet = null;    // Current candle time set
-let _sCandleTimesArr = null;   // Current candle times array
+let _sAllMarkers = [];
+let _sCandleTimeSet = null;
+let _sCandleTimesArr = null;
 let _sResizeObserver = null;
+let _sScrollSyncActive = false;
+
+function sWeekRange(weekEntry) {
+  if (!weekEntry) return null;
+  return { from: toTS(weekEntry.start + 'T00:00:00'), to: toTS(weekEntry.end + 'T23:59:00') };
+}
+
+function sDayRange(dayStr) {
+  const d = new Date(dayStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  const prevDate = d.toISOString().split('T')[0];
+  return { from: toTS(prevDate + 'T17:00:00'), to: toTS(dayStr + 'T16:59:00') };
+}
+
+function scrollStrategyToDay(dayStr) {
+  if (!sApp.chart) return;
+  _sScrollSyncActive = true;
+  if (dayStr) {
+    sApp.chart.timeScale().setVisibleRange(sDayRange(dayStr));
+  } else {
+    sApp.chart.timeScale().fitContent();
+  }
+  setTimeout(() => { _sScrollSyncActive = false; }, 200);
+}
+
+function highlightStrategyDayTab(dayStr) {
+  const container = document.getElementById('day-tabs');
+  if (!container) return;
+  container.querySelectorAll('.day-tab').forEach(btn => {
+    const isAll = !btn.dataset.day;
+    if (dayStr === null) {
+      btn.classList.toggle('active', isAll);
+    } else {
+      btn.classList.toggle('active', btn.dataset.day === dayStr);
+    }
+  });
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════════
  * Session Bands Primitive (ISeriesPrimitive 3-class pattern)
@@ -258,9 +295,37 @@ function createStrategyChart() {
   candleSeries.attachPrimitive(chainHighlightPrimitive);
 
   // Subscribe to visible range changes
-  chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+  chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
     if (sessionPrimitive._requestUpdate) sessionPrimitive._requestUpdate();
     if (chainHighlightPrimitive._requestUpdate) chainHighlightPrimitive._requestUpdate();
+    // Scroll sync
+    if (_sScrollSyncActive || !range || range.from == null || range.to == null) return;
+    const center = Math.floor((range.from + range.to) / 2);
+
+    if (isHTF(sApp.tf) && _sHTFAllWeeksLoaded && sApp.weeks.length > 0) {
+      for (const w of sApp.weeks) {
+        const wStart = toTS(w.start + 'T00:00:00');
+        const wEnd = toTS(w.end + 'T23:59:00');
+        if (center >= wStart && center <= wEnd && w.week !== (sApp.currentWeek && sApp.currentWeek.week)) {
+          sApp.currentWeek = w;
+          const picker = document.getElementById('week-picker');
+          if (picker) picker.value = w.week;
+          break;
+        }
+      }
+      return;
+    }
+
+    if (!sApp.currentWeek || !sApp.day) return;
+    const days = sApp.currentWeek.forex_days || [];
+    for (const dk of days) {
+      const r = sDayRange(dk);
+      if (center >= r.from && center <= r.to && dk !== sApp.day) {
+        sApp.day = dk;
+        highlightStrategyDayTab(dk);
+        break;
+      }
+    }
   });
 
   // Resize observer for responsive chart
@@ -308,7 +373,6 @@ function refreshStrategyChart() {
     return;
   }
 
-  // Get candle data for current TF
   const raw = sApp.candleData[sApp.tf];
   if (!raw || !raw.length) {
     sApp.candleSeries.setData([]);
@@ -318,58 +382,43 @@ function refreshStrategyChart() {
     return;
   }
 
-  // Map candle data — filter by current day
-  let candles = raw.map(c => ({
+  // Always load ALL candles for the week (continuous timeline)
+  const chartData = raw.map(c => ({
     time: toTS(c.time),
     open: c.open,
     high: c.high,
     low: c.low,
     close: c.close,
-    _rawTime: c.time,
-  })).filter(b => b.time != null);
-
-  // Filter candles to the selected day
-  if (sApp.day) {
-    candles = candles.filter(c => {
-      // Strip timezone, check date prefix
-      const clean = (c._rawTime || '').replace(/[+-]\d{2}:\d{2}$/, '');
-      return clean.startsWith(sApp.day);
-    });
-  }
-
-  candles.sort((a, b) => a.time - b.time);
-
-  // Set candle data (strip the _rawTime helper)
-  const chartData = candles.map(c => ({
-    time: c.time,
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-  }));
+  })).filter(b => b.time != null)
+    .sort((a, b) => a.time - b.time);
 
   sApp.candleSeries.setData(chartData);
 
-  // Build candle time lookup sets
   _sCandleTimeSet = new Set(chartData.map(c => c.time));
   _sCandleTimesArr = chartData.map(c => c.time);
 
-  // Build all markers (filtered by direction)
+  // Build markers for ALL days (filtered by direction only)
   _sAllMarkers = buildStrategyMarkers();
-
-  // Apply markers
   rebuildStrategyMarkers();
 
-  // Session bands for current day
-  const bands = getStrategySessionBandsForDay(sApp.day);
+  // Session bands for ALL days
+  const bands = getStrategySessionBandsForDay(null);
   if (_sSessionPrimitive) {
     _sSessionPrimitive.setBands(bands);
   }
 
-  // Fit content
-  sApp.chart.timeScale().fitContent();
+  // Scroll to selected day, or week on HTF, or fit all
+  if (sApp.day) {
+    scrollStrategyToDay(sApp.day);
+  } else if (isHTF(sApp.tf) && _sHTFAllWeeksLoaded && sApp.currentWeek) {
+    _sScrollSyncActive = true;
+    const wr = sWeekRange(sApp.currentWeek);
+    if (wr) sApp.chart.timeScale().setVisibleRange(wr);
+    setTimeout(() => { _sScrollSyncActive = false; }, 200);
+  } else {
+    sApp.chart.timeScale().fitContent();
+  }
 
-  // Force primitive update after layout settles
   requestAnimationFrame(() => {
     if (_sSessionPrimitive && _sSessionPrimitive._requestUpdate) {
       _sSessionPrimitive._requestUpdate();
@@ -380,8 +429,6 @@ function refreshStrategyChart() {
       }
     });
   });
-
-  // TODO: Task 6 will implement chain highlight overlay rendering here
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -397,13 +444,9 @@ function buildStrategyMarkers() {
   for (const [primName, byTf] of Object.entries(sApp.detectionData.detections_by_primitive)) {
     const primColor = sPrimColor(primName);
 
-    // Get detections for current TF (or 'global' for primitives that don't have per-TF data)
     const tfDets = byTf[sApp.tf] || byTf['global'] || [];
 
-    // Filter to current day
-    const dayDets = filterStrategyDetectionsByDay(tfDets, sApp.day);
-
-    for (const det of dayDets) {
+    for (const det of tfDets) {
       const barTime = findStrategyNearestCandleTime(det.time);
       if (barTime == null) continue;
 
@@ -496,10 +539,9 @@ function filterStrategyDetectionsByDay(detections, dayKey) {
     // Primary: use properties.forex_day
     const fd = det.properties && det.properties.forex_day;
     if (fd) return fd === dayKey;
-    // Fallback: parse date from time string (strip timezone)
+    // Fallback: compute forex day from time string
     const t = det.time || '';
-    const clean = t.replace(/[+-]\d{2}:\d{2}$/, '');
-    return clean.startsWith(dayKey);
+    return getForexDay(t) === dayKey;
   });
 }
 
@@ -510,16 +552,27 @@ function filterStrategyDetectionsByDay(detections, dayKey) {
 function getStrategySessionBandsForDay(dayKey) {
   if (!sApp.sessionData) return [];
   const VISIBLE_SESSIONS = new Set(['asia', 'lokz', 'nyokz']);
+  const htf = isHTF(sApp.tf);
+
   return sApp.sessionData
     .filter(b => VISIBLE_SESSIONS.has(b.session) && (!dayKey || b.forex_day === dayKey))
-    .map(b => ({
-      startTS: toTS(b.start_time),
-      endTS: toTS(b.end_time),
-      color: b.color,
-      border: b.border,
-      session: b.session,
-      label: b.label,
-    }))
+    .map(b => {
+      let color = b.color;
+      let border = b.border;
+      // Reduce opacity on HTF week view to prevent solid color stacking
+      if (htf && !dayKey) {
+        color = color.replace(/([\d.]+)\)$/, (_, a) => (parseFloat(a) * 0.4).toFixed(2) + ')');
+        border = border.replace(/([\d.]+)\)$/, (_, a) => (parseFloat(a) * 0.5).toFixed(2) + ')');
+      }
+      return {
+        startTS: toTS(b.start_time),
+        endTS: toTS(b.end_time),
+        color,
+        border,
+        session: b.session,
+        label: b.label,
+      };
+    })
     .filter(b => b.startTS != null && b.endTS != null);
 }
 

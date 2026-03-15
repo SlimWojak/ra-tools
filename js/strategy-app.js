@@ -65,6 +65,8 @@ const S_TIMING_OPTIONS = [
   { value: 'within_bars_5', label: 'Within 5 bars' },
   { value: 'within_bars_10', label: 'Within 10 bars' },
   { value: 'within_bars_20', label: 'Within 20 bars' },
+  { value: 'within_hours_4', label: 'Within 4 hours' },
+  { value: 'within_hours_8', label: 'Within 8 hours' },
 ];
 
 /* ── Session Legend Metadata ────────────────────────────────────────────────── */
@@ -74,6 +76,31 @@ const S_SESSION_META = [
   { key: 'lokz',  label: 'LOKZ 02:00–05:00', color: 'rgba(41,98,255,0.5)' },
   { key: 'nyokz', label: 'NYOKZ 07:00–10:00', color: 'rgba(247,197,72,0.5)' },
 ];
+
+/* ── Forex Day Utility ─────────────────────────────────────────────────────── */
+
+/**
+ * Compute the forex day (YYYY-MM-DD) a timestamp belongs to.
+ * Forex day starts at 17:00 NY — a candle at/after 17:00 belongs to the NEXT day.
+ * @param {string} rawTimeStr — e.g. "2025-09-28T20:00:00-04:00" or "2025-09-28T20:00:00"
+ * @returns {string} YYYY-MM-DD forex day
+ */
+function getForexDay(rawTimeStr) {
+  if (!rawTimeStr) return '';
+  // Strip TZ offset to get local NY time
+  const clean = rawTimeStr.replace(/[+-]\d{2}:\d{2}$/, '');
+  const tPart = (clean.split('T')[1]) || '';
+  const hour = parseInt(tPart.split(':')[0], 10);
+  const datePart = clean.split('T')[0];
+
+  if (hour >= 17) {
+    // After 17:00 NY → belongs to NEXT forex day
+    const d = new Date(datePart + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().split('T')[0];
+  }
+  return datePart;
+}
 
 /* ── Timestamp Conversion ──────────────────────────────────────────────────── */
 
@@ -134,6 +161,57 @@ async function loadWeekData(weekId) {
     sApp.candleData = null;
     sApp.detectionData = null;
     sApp.sessionData = null;
+  }
+
+  if (loading) loading.classList.add('hidden');
+}
+
+/* ── Multi-week HTF loading ────────────────────────────────────────────────── */
+
+let _sHTFAllWeeksLoaded = false;
+
+async function loadAllWeeksHTF_strategy() {
+  if (_sHTFAllWeeksLoaded) return;
+  const loading = document.getElementById('loading-overlay');
+  if (loading) loading.classList.remove('hidden');
+
+  try {
+    const fetches = sApp.weeks.map(w => Promise.all([
+      fetch(`data/candles/${w.week}.json`).then(r => r.ok ? r.json() : null),
+      fetch(`data/detections/${w.week}.json`).then(r => r.ok ? r.json() : null),
+      fetch(`data/sessions/${w.week}.json`).then(r => r.ok ? r.json() : null),
+    ]));
+    const results = await Promise.all(fetches);
+
+    const merged = {};
+    for (const tf of ['1H', '4H']) { merged[tf] = []; }
+    const mergedDets = {};
+    const mergedSessions = [];
+
+    for (const [candles, dets, sessions] of results) {
+      if (candles) {
+        for (const tf of ['1H', '4H']) {
+          if (candles[tf]) merged[tf].push(...candles[tf]);
+        }
+      }
+      if (dets && dets.detections_by_primitive) {
+        for (const [prim, byTf] of Object.entries(dets.detections_by_primitive)) {
+          if (!mergedDets[prim]) mergedDets[prim] = {};
+          for (const [tf, arr] of Object.entries(byTf)) {
+            if (!mergedDets[prim][tf]) mergedDets[prim][tf] = [];
+            mergedDets[prim][tf].push(...arr);
+          }
+        }
+      }
+      if (sessions) mergedSessions.push(...sessions);
+    }
+
+    sApp.candleData = merged;
+    sApp.detectionData = { detections_by_primitive: mergedDets };
+    sApp.sessionData = mergedSessions;
+    _sHTFAllWeeksLoaded = true;
+  } catch (e) {
+    console.error('Failed to load all weeks for HTF:', e);
   }
 
   if (loading) loading.classList.add('hidden');
@@ -231,7 +309,6 @@ function renderDayTabs() {
 
   const htf = isHTF(sApp.tf);
 
-  // "All" tab — visible when HTF is active
   if (htf) {
     const allBtn = document.createElement('button');
     allBtn.className = 'day-tab' + (sApp.day === null ? ' active' : '');
@@ -240,7 +317,7 @@ function renderDayTabs() {
       if (sApp.day === null) return;
       sApp.day = null;
       renderDayTabs();
-      refreshStrategyChart();
+      if (typeof scrollStrategyToDay === 'function') scrollStrategyToDay(null);
     });
     container.appendChild(allBtn);
   }
@@ -255,7 +332,7 @@ function renderDayTabs() {
       if (d === sApp.day) return;
       sApp.day = d;
       renderDayTabs();
-      refreshStrategyChart();
+      if (typeof scrollStrategyToDay === 'function') scrollStrategyToDay(d);
     });
     container.appendChild(btn);
   }
@@ -279,25 +356,32 @@ function renderTFButtons() {
     btn.className = 'tf-btn' + (tf === sApp.tf ? ' active' : '');
     btn.textContent = tf;
     btn.dataset.tf = tf;
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (tf === sApp.tf) return;
       const wasHTF = isHTF(sApp.tf);
       const nowHTF = isHTF(tf);
       sApp.tf = tf;
 
-      // Transition HTF ↔ LTF day selection
       if (!wasHTF && nowHTF) {
-        // Switching TO HTF: show all days (week view)
         sApp.day = null;
+        renderTFButtons();
+        renderDayTabs();
+        await loadAllWeeksHTF_strategy();
+        refreshStrategyChart();
+        if (sApp.steps.length > 0) evaluateChain();
       } else if (wasHTF && !nowHTF) {
-        // Switching FROM HTF to LTF: select first forex day
         const days = sApp.currentWeek ? (sApp.currentWeek.forex_days || []) : [];
         sApp.day = days.length > 0 ? days[0] : null;
+        if (sApp.currentWeek) await loadWeekData(sApp.currentWeek.week);
+        renderTFButtons();
+        renderDayTabs();
+        refreshStrategyChart();
+        if (sApp.steps.length > 0) evaluateChain();
+      } else {
+        renderTFButtons();
+        renderDayTabs();
+        refreshStrategyChart();
       }
-
-      renderTFButtons();
-      renderDayTabs();
-      refreshStrategyChart();
     });
     container.appendChild(btn);
   }

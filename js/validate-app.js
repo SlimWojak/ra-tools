@@ -63,6 +63,31 @@ const V_SESSION_META = [
   { key: 'nyokz', label: 'NYOKZ 07:00–10:00', color: 'rgba(247,197,72,0.5)' },
 ];
 
+/* ── Forex Day Utility ─────────────────────────────────────────────────────── */
+
+/**
+ * Compute the forex day (YYYY-MM-DD) a timestamp belongs to.
+ * Forex day starts at 17:00 NY — a candle at/after 17:00 belongs to the NEXT day.
+ * @param {string} rawTimeStr — e.g. "2025-09-28T20:00:00-04:00" or "2025-09-28T20:00:00"
+ * @returns {string} YYYY-MM-DD forex day
+ */
+function getForexDay(rawTimeStr) {
+  if (!rawTimeStr) return '';
+  // Strip TZ offset to get local NY time
+  const clean = rawTimeStr.replace(/[+-]\d{2}:\d{2}$/, '');
+  const tPart = (clean.split('T')[1]) || '';
+  const hour = parseInt(tPart.split(':')[0], 10);
+  const datePart = clean.split('T')[0];
+
+  if (hour >= 17) {
+    // After 17:00 NY → belongs to NEXT forex day
+    const d = new Date(datePart + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().split('T')[0];
+  }
+  return datePart;
+}
+
 /* ── Timestamp Conversion ──────────────────────────────────────────────────── */
 
 function toTS(s) {
@@ -131,6 +156,61 @@ async function loadWeekData(weekId) {
     vApp.detectionData = null;
     vApp.sessionData = null;
     vApp.labelsData = [];
+  }
+
+  if (loading) loading.classList.add('hidden');
+}
+
+/* ── Multi-week HTF loading ────────────────────────────────────────────────── */
+
+let _vHTFAllWeeksLoaded = false;
+
+async function loadAllWeeksHTF() {
+  if (_vHTFAllWeeksLoaded) return;
+  const loading = document.getElementById('loading-overlay');
+  if (loading) loading.classList.remove('hidden');
+
+  try {
+    const fetches = vApp.weeks.map(w => Promise.all([
+      fetch(`data/candles/${w.week}.json`).then(r => r.ok ? r.json() : null),
+      fetch(`data/detections/${w.week}.json`).then(r => r.ok ? r.json() : null),
+      fetch(`data/sessions/${w.week}.json`).then(r => r.ok ? r.json() : null),
+    ]));
+    const results = await Promise.all(fetches);
+
+    // Merge candles by TF
+    const merged = {};
+    for (const tf of ['1H', '4H']) { merged[tf] = []; }
+    // Merge detections
+    const mergedDets = {};
+    // Merge sessions
+    const mergedSessions = [];
+
+    for (let i = 0; i < results.length; i++) {
+      const [candles, dets, sessions] = results[i];
+      if (candles) {
+        for (const tf of ['1H', '4H']) {
+          if (candles[tf]) merged[tf].push(...candles[tf]);
+        }
+      }
+      if (dets && dets.detections_by_primitive) {
+        for (const [prim, byTf] of Object.entries(dets.detections_by_primitive)) {
+          if (!mergedDets[prim]) mergedDets[prim] = {};
+          for (const [tf, arr] of Object.entries(byTf)) {
+            if (!mergedDets[prim][tf]) mergedDets[prim][tf] = [];
+            mergedDets[prim][tf].push(...arr);
+          }
+        }
+      }
+      if (sessions) mergedSessions.push(...sessions);
+    }
+
+    vApp.candleData = merged;
+    vApp.detectionData = { detections_by_primitive: mergedDets };
+    vApp.sessionData = mergedSessions;
+    _vHTFAllWeeksLoaded = true;
+  } catch (e) {
+    console.error('Failed to load all weeks for HTF:', e);
   }
 
   if (loading) loading.classList.add('hidden');
@@ -279,7 +359,6 @@ function renderDayTabs() {
   const days = vApp.currentWeek.forex_days || [];
   const htf = isHTF(vApp.tf);
 
-  // Show "All" tab when HTF is active
   if (htf) {
     const allBtn = document.createElement('button');
     allBtn.className = 'day-tab' + (vApp.day === null ? ' active' : '');
@@ -288,7 +367,7 @@ function renderDayTabs() {
       if (vApp.day === null) return;
       vApp.day = null;
       renderDayTabs();
-      refreshValidateChart();
+      if (typeof scrollValidateToDay === 'function') scrollValidateToDay(null);
     });
     container.appendChild(allBtn);
   }
@@ -302,7 +381,7 @@ function renderDayTabs() {
       if (d === vApp.day) return;
       vApp.day = d;
       renderDayTabs();
-      refreshValidateChart();
+      if (typeof scrollValidateToDay === 'function') scrollValidateToDay(d);
     });
     container.appendChild(btn);
   }
@@ -326,25 +405,31 @@ function renderTFButtons() {
     btn.className = 'tf-btn' + (tf === vApp.tf ? ' active' : '');
     btn.textContent = tf;
     btn.dataset.tf = tf;
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (tf === vApp.tf) return;
       const wasHTF = isHTF(vApp.tf);
       const nowHTF = isHTF(tf);
       vApp.tf = tf;
 
-      // Transition HTF ↔ LTF day selection
       if (!wasHTF && nowHTF) {
-        // Switching TO HTF: show all days (week view)
         vApp.day = null;
+        renderTFButtons();
+        renderDayTabs();
+        await loadAllWeeksHTF();
+        refreshValidateChart();
       } else if (wasHTF && !nowHTF) {
-        // Switching FROM HTF to LTF: select first forex day
         const days = vApp.currentWeek ? (vApp.currentWeek.forex_days || []) : [];
         vApp.day = days.length > 0 ? days[0] : null;
+        // Restore single-week data
+        if (vApp.currentWeek) await loadWeekData(vApp.currentWeek.week);
+        renderTFButtons();
+        renderDayTabs();
+        refreshValidateChart();
+      } else {
+        renderTFButtons();
+        renderDayTabs();
+        refreshValidateChart();
       }
-
-      renderTFButtons();
-      renderDayTabs();
-      refreshValidateChart();
     });
     container.appendChild(btn);
   }
@@ -439,10 +524,9 @@ function filterValidateDetectionsByDay(detections, dayKey) {
     // Primary: use properties.forex_day
     const fd = det.properties && det.properties.forex_day;
     if (fd) return fd === dayKey;
-    // Fallback: parse date from time string (strip timezone)
+    // Fallback: compute forex day from time string
     const t = det.time || '';
-    const clean = t.replace(/[+-]\d{2}:\d{2}$/, '');
-    return clean.startsWith(dayKey);
+    return getForexDay(t) === dayKey;
   });
 }
 

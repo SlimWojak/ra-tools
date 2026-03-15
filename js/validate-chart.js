@@ -8,10 +8,23 @@
 
 let _vChartCreated = false;
 let _vSessionPrimitive = null;
-let _vAllMarkers = [];         // All built markers (unfiltered) for current day/tf
-let _vCandleTimeSet = null;    // Current candle time set
-let _vCandleTimesArr = null;   // Current candle times array
+let _vAllMarkers = [];
+let _vCandleTimeSet = null;
+let _vCandleTimesArr = null;
 let _vResizeObserver = null;
+
+function vWeekRange(weekEntry) {
+  if (!weekEntry) return null;
+  return { from: toTS(weekEntry.start + 'T00:00:00'), to: toTS(weekEntry.end + 'T23:59:00') };
+}
+
+function highlightValidateDayTab(dayStr) {
+  const container = document.getElementById('day-tabs');
+  if (!container) return;
+  container.querySelectorAll('.day-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.day === dayStr);
+  });
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════════
  * Session Bands Primitive (ISeriesPrimitive 3-class pattern)
@@ -155,8 +168,37 @@ function createValidateChart() {
   candleSeries.attachPrimitive(sessionPrimitive);
 
   // Subscribe to visible range changes
-  chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+  chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
     if (sessionPrimitive._requestUpdate) sessionPrimitive._requestUpdate();
+    if (_vScrollSyncActive || !range || range.from == null || range.to == null) return;
+
+    const center = Math.floor((range.from + range.to) / 2);
+
+    if (isHTF(vApp.tf) && _vHTFAllWeeksLoaded && vApp.weeks.length > 0) {
+      // Week-level scroll sync on HTF
+      for (const w of vApp.weeks) {
+        const wStart = toTS(w.start + 'T00:00:00');
+        const wEnd = toTS(w.end + 'T23:59:00');
+        if (center >= wStart && center <= wEnd && w.week !== (vApp.currentWeek && vApp.currentWeek.week)) {
+          vApp.currentWeek = w;
+          const picker = document.getElementById('week-picker');
+          if (picker) picker.value = w.week;
+          break;
+        }
+      }
+      return;
+    }
+
+    if (!vApp.currentWeek || !vApp.day) return;
+    const days = vApp.currentWeek.forex_days || [];
+    for (const dk of days) {
+      const r = vDayRange(dk);
+      if (center >= r.from && center <= r.to && dk !== vApp.day) {
+        vApp.day = dk;
+        highlightValidateDayTab(dk);
+        break;
+      }
+    }
   });
 
   // Resize observer for responsive chart
@@ -194,6 +236,26 @@ function initOrRefreshChart() {
  * refreshValidateChart — Load candles, markers, session bands for current state
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
+let _vScrollSyncActive = false;
+
+function vDayRange(dayStr) {
+  const d = new Date(dayStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  const prevDate = d.toISOString().split('T')[0];
+  return { from: toTS(prevDate + 'T17:00:00'), to: toTS(dayStr + 'T16:59:00') };
+}
+
+function scrollValidateToDay(dayStr) {
+  if (!vApp.chart) return;
+  _vScrollSyncActive = true;
+  if (dayStr) {
+    vApp.chart.timeScale().setVisibleRange(vDayRange(dayStr));
+  } else {
+    vApp.chart.timeScale().fitContent();
+  }
+  setTimeout(() => { _vScrollSyncActive = false; }, 200);
+}
+
 function refreshValidateChart() {
   if (!vApp.chart || !vApp.candleSeries) return;
   if (!vApp.candleData) {
@@ -205,7 +267,6 @@ function refreshValidateChart() {
     return;
   }
 
-  // Get candle data for current TF
   const raw = vApp.candleData[vApp.tf];
   if (!raw || !raw.length) {
     vApp.candleSeries.setData([]);
@@ -216,58 +277,43 @@ function refreshValidateChart() {
     return;
   }
 
-  // Map candle data — filter by current day if we have a day selected
-  let candles = raw.map(c => ({
+  // Always load ALL candles for the week (continuous timeline)
+  const chartData = raw.map(c => ({
     time: toTS(c.time),
     open: c.open,
     high: c.high,
     low: c.low,
     close: c.close,
-    _rawTime: c.time,
-  })).filter(b => b.time != null);
-
-  // Filter candles to the selected day
-  if (vApp.day) {
-    candles = candles.filter(c => {
-      // Strip timezone, check date prefix
-      const clean = (c._rawTime || '').replace(/[+-]\d{2}:\d{2}$/, '');
-      return clean.startsWith(vApp.day);
-    });
-  }
-
-  candles.sort((a, b) => a.time - b.time);
-
-  // Set candle data (strip the _rawTime helper)
-  const chartData = candles.map(c => ({
-    time: c.time,
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-  }));
+  })).filter(b => b.time != null)
+    .sort((a, b) => a.time - b.time);
 
   vApp.candleSeries.setData(chartData);
 
-  // Build candle time lookup sets
   _vCandleTimeSet = new Set(chartData.map(c => c.time));
   _vCandleTimesArr = chartData.map(c => c.time);
 
-  // Build all markers (unfiltered) and store
+  // Build markers for ALL days
   _vAllMarkers = buildValidateMarkers();
-
-  // Apply toggle filters
   rebuildValidateMarkers();
 
-  // Session bands for current day
-  const bands = getValidateSessionBandsForDay(vApp.day);
+  // Session bands for ALL days (reduced opacity)
+  const bands = getValidateSessionBandsForDay(null);
   if (_vSessionPrimitive) {
     _vSessionPrimitive.setBands(bands);
   }
 
-  // Fit content
-  vApp.chart.timeScale().fitContent();
+  // Scroll to selected day, or week on HTF, or fit all
+  if (vApp.day) {
+    scrollValidateToDay(vApp.day);
+  } else if (isHTF(vApp.tf) && _vHTFAllWeeksLoaded && vApp.currentWeek) {
+    _vScrollSyncActive = true;
+    const wr = vWeekRange(vApp.currentWeek);
+    if (wr) vApp.chart.timeScale().setVisibleRange(wr);
+    setTimeout(() => { _vScrollSyncActive = false; }, 200);
+  } else {
+    vApp.chart.timeScale().fitContent();
+  }
 
-  // Force primitive update after layout settles
   requestAnimationFrame(() => {
     if (_vSessionPrimitive && _vSessionPrimitive._requestUpdate) {
       _vSessionPrimitive._requestUpdate();
@@ -279,7 +325,6 @@ function refreshValidateChart() {
     });
   });
 
-  // Update detection count summary
   updateDetectionCounts();
 }
 
@@ -296,13 +341,9 @@ function buildValidateMarkers() {
   for (const [primName, byTf] of Object.entries(vApp.detectionData.detections_by_primitive)) {
     const primColor = vPrimColor(primName);
 
-    // Get detections for current TF (or 'global' for primitives that don't have per-TF data)
     const tfDets = byTf[vApp.tf] || byTf['global'] || [];
 
-    // Filter to current day
-    const dayDets = filterValidateDetectionsByDay(tfDets, vApp.day);
-
-    for (const det of dayDets) {
+    for (const det of tfDets) {
       const barTime = findValidateNearestCandleTime(det.time);
       if (barTime == null) continue;
 
@@ -396,15 +437,26 @@ function findValidateNearestCandleTime(detTime) {
 function getValidateSessionBandsForDay(dayKey) {
   if (!vApp.sessionData) return [];
   const VISIBLE_SESSIONS = new Set(['asia', 'lokz', 'nyokz']);
+  const htf = isHTF(vApp.tf);
+
   return vApp.sessionData
     .filter(b => VISIBLE_SESSIONS.has(b.session) && (!dayKey || b.forex_day === dayKey))
-    .map(b => ({
-      startTS: toTS(b.start_time),
-      endTS: toTS(b.end_time),
-      color: b.color,
-      border: b.border,
-      session: b.session,
-      label: b.label,
-    }))
+    .map(b => {
+      let color = b.color;
+      let border = b.border;
+      // Reduce opacity on HTF week view to prevent solid color stacking
+      if (htf && !dayKey) {
+        color = color.replace(/([\d.]+)\)$/, (_, a) => (parseFloat(a) * 0.4).toFixed(2) + ')');
+        border = border.replace(/([\d.]+)\)$/, (_, a) => (parseFloat(a) * 0.5).toFixed(2) + ')');
+      }
+      return {
+        startTS: toTS(b.start_time),
+        endTS: toTS(b.end_time),
+        color,
+        border,
+        session: b.session,
+        label: b.label,
+      };
+    })
     .filter(b => b.startTS != null && b.endTS != null);
 }

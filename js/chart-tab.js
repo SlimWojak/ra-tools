@@ -8,9 +8,46 @@
 
 let _chartInitialized = false;
 let _sessionPrimitive = null;
-let _allMarkers = [];       // All built markers (unfiltered) for current day/tf
-let _candleTimeSet = null;  // Current candle time set
-let _candleTimesArr = null; // Current candle times array
+let _allMarkers = [];
+let _candleTimeSet = null;
+let _candleTimesArr = null;
+let _cScrollSyncActive = false;
+
+function cWeekRange(weekEntry) {
+  if (!weekEntry) return null;
+  return { from: toTS(weekEntry.start + 'T00:00:00'), to: toTS(weekEntry.end + 'T23:59:00') };
+}
+
+function cDayRange(dayStr) {
+  const d = new Date(dayStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  const prevDate = d.toISOString().split('T')[0];
+  return { from: toTS(prevDate + 'T17:00:00'), to: toTS(dayStr + 'T16:59:00') };
+}
+
+function scrollCompareToDay(dayStr) {
+  if (!app.chart) return;
+  _cScrollSyncActive = true;
+  if (dayStr) {
+    app.chart.timeScale().setVisibleRange(cDayRange(dayStr));
+  } else {
+    app.chart.timeScale().fitContent();
+  }
+  setTimeout(() => { _cScrollSyncActive = false; }, 200);
+}
+
+function highlightCompareDayTab(dayStr) {
+  const container = document.getElementById('chart-day-tabs');
+  if (!container) return;
+  container.querySelectorAll('.chart-day-tab').forEach(btn => {
+    const isAll = btn.textContent === 'All';
+    if (dayStr === null) {
+      btn.classList.toggle('active', isAll);
+    } else {
+      btn.classList.toggle('active', btn.dataset.day === dayStr);
+    }
+  });
+}
 
 /** Reset chart tab state so it re-initializes on next activation. */
 function resetChartTab() {
@@ -116,13 +153,12 @@ class SessionBandsPrimitive {
  */
 function filterDetectionsByDay(detections, dayKey) {
   if (!detections || !detections.length) return [];
+  if (!dayKey) return detections; // null/undefined = all days (HTF week view)
   return detections.filter(det => {
-    // Primary: use tags.forex_day
     const fd = det.tags && det.tags.forex_day;
     if (fd) return fd === dayKey;
-    // Fallback: parse date from time string
     const t = det.time || '';
-    return t.startsWith(dayKey);
+    return getForexDay(t) === dayKey;
   });
 }
 
@@ -154,6 +190,11 @@ function findNearestCandleTime(detTime, candleTimeSet, candleTimes) {
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
 function buildMarkers(candleTimesSet, candleTimesArr) {
+  // Week mode: build markers from detection data directly
+  if (app.weekMode && app.weekData && app.weekData.detectionData) {
+    return buildWeekModeMarkers(candleTimesSet, candleTimesArr);
+  }
+
   if (!app.evalData || !app.evalData.per_config) return [];
 
   const configs = app.evalData.configs || [];
@@ -173,10 +214,9 @@ function buildMarkers(candleTimesSet, candleTimesArr) {
       const tfData = primData.per_tf[app.tf];
       if (!tfData || !tfData.detections) continue;
 
-      const dayDets = filterDetectionsByDay(tfData.detections, app.day);
+      const dayDets = filterDetectionsByDay(tfData.detections, null);
 
       for (const det of dayDets) {
-        // Filter displacement to VALID+ grades only (WEAK/None are tagged but not display-worthy)
         if (prim === 'displacement') {
           const grade = det.properties && det.properties.quality_grade;
           if (grade !== 'VALID' && grade !== 'STRONG' && grade !== 'DECISIVE') continue;
@@ -241,6 +281,93 @@ function buildMarkers(candleTimesSet, candleTimesArr) {
   });
 }
 
+/**
+ * Build markers from week detection data (detection mode).
+ * Uses the flat detections_by_primitive structure instead of Schema 4A per_config.
+ */
+function buildWeekModeMarkers(candleTimesSet, candleTimesArr) {
+  const detData = app.weekData.detectionData;
+  if (!detData || !detData.detections_by_primitive) return [];
+
+  const dbp = detData.detections_by_primitive;
+  const markers = [];
+  const colors = CONFIG_COLORS[0]; // Use primary color palette
+  const configName = detData.config || 'locked_a8ra_v1';
+
+  for (const prim of PRIMITIVES) {
+    // sweep_continuation is virtual — read from liquidity_sweep
+    const dataPrim = (prim === 'sweep_continuation') ? 'liquidity_sweep' : prim;
+    const byTf = dbp[dataPrim];
+    if (!byTf) continue;
+
+    const tfDets = byTf[app.tf] || [];
+    const dayDets = filterDetectionsByDay(tfDets, null);
+
+    for (const det of dayDets) {
+      if (prim === 'displacement') {
+        const grade = det.properties && det.properties.quality_grade;
+        if (grade !== 'VALID' && grade !== 'STRONG' && grade !== 'DECISIVE') continue;
+      }
+
+      // Only render whitelisted liquidity_sweep types
+      const detType = det.properties && det.properties.type;
+      if (prim === 'liquidity_sweep' && detType !== 'SWEEP' && detType !== 'CONTINUATION') continue;
+
+      // Split continuations
+      const isContinuation = (prim === 'liquidity_sweep' && detType === 'CONTINUATION');
+      if (prim === 'sweep_continuation' && detType !== 'CONTINUATION') continue;
+      if (prim === 'liquidity_sweep' && detType === 'CONTINUATION') continue;
+      const effectivePrim = isContinuation ? 'sweep_continuation' : prim;
+
+      const barTime = findNearestCandleTime(det.time, candleTimesSet, candleTimesArr);
+      if (barTime == null) continue;
+
+      const dir = det.direction;
+      const pm = PRIMITIVE_MARKERS[effectivePrim];
+      let position, shape, markerColor, text;
+
+      if (pm) {
+        const isHigh = dir === 'high' || dir === 'bearish';
+        position = isHigh ? 'aboveBar' : 'belowBar';
+        shape = isHigh ? pm.shape_high : pm.shape_low;
+        markerColor = pm.color;
+        text = (dataPrim === 'swing_points') ? (dir === 'high' ? 'SWH' : 'SWL')
+             : isContinuation ? 'C' : '';
+      } else {
+        const isBullish = dir === 'bullish' || dir === 'high';
+        position = isBullish ? 'belowBar' : 'aboveBar';
+        shape = isBullish ? 'arrowUp' : 'arrowDown';
+        markerColor = colors.base;
+        text = '';
+      }
+
+      markers.push({
+        time: barTime,
+        position,
+        shape,
+        color: markerColor,
+        size: 1,
+        text,
+        _config: configName,
+        _primitive: effectivePrim,
+        _detId: det.id,
+      });
+    }
+  }
+
+  // Sort by time (required by LWC)
+  markers.sort((a, b) => a.time - b.time);
+
+  // Deduplicate
+  const seen = new Set();
+  return markers.filter(m => {
+    const k = `${m.time}_${m.position}_${m._config}_${m._primitive}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════════
  * rebuildMarkers — Filter markers by toggle state and apply to chart
  * ═══════════════════════════════════════════════════════════════════════════════ */
@@ -275,10 +402,17 @@ function rebuildMarkers() {
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
 function initToggles() {
-  if (!app.evalData) return;
-
   // Config toggles: all on by default
-  const configs = app.evalData.configs || [];
+  let configs;
+  if (app.weekMode && app.weekData && app.weekData.detectionData) {
+    const configName = app.weekData.detectionData.config || 'locked_a8ra_v1';
+    configs = [configName];
+  } else if (app.evalData) {
+    configs = app.evalData.configs || [];
+  } else {
+    return;
+  }
+
   const ct = {};
   for (const c of configs) {
     ct[c] = true;
@@ -298,8 +432,15 @@ function initToggles() {
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
 function renderConfigToggles(container) {
-  if (!app.evalData) return;
-  const configs = app.evalData.configs || [];
+  let configs;
+  if (app.weekMode && app.weekData && app.weekData.detectionData) {
+    const configName = app.weekData.detectionData.config || 'locked_a8ra_v1';
+    configs = [configName];
+  } else if (app.evalData) {
+    configs = app.evalData.configs || [];
+  } else {
+    return;
+  }
   container.innerHTML = '';
 
   const wrapper = document.createElement('div');
@@ -391,6 +532,11 @@ function _markerSymbol(shape) {
  * Returns: { configName: { primitiveName: count } }
  */
 function getDetectionCountsForDay() {
+  // Week mode: read from detection data directly
+  if (app.weekMode && app.weekData && app.weekData.detectionData) {
+    return getWeekModeDetectionCountsForDay();
+  }
+
   const result = {};
   if (!app.evalData || !app.evalData.per_config) return result;
 
@@ -438,19 +584,64 @@ function getDetectionCountsForDay() {
   return result;
 }
 
+/**
+ * Get detection counts for week mode (single config from detection data).
+ */
+function getWeekModeDetectionCountsForDay() {
+  const result = {};
+  const detData = app.weekData.detectionData;
+  if (!detData || !detData.detections_by_primitive) return result;
+
+  const configName = detData.config || 'locked_a8ra_v1';
+  const dbp = detData.detections_by_primitive;
+  result[configName] = {};
+
+  for (const prim of PRIMITIVES) {
+    const dataPrim = (prim === 'sweep_continuation') ? 'liquidity_sweep' : prim;
+    const byTf = dbp[dataPrim];
+    if (!byTf) {
+      result[configName][prim] = 0;
+      continue;
+    }
+    const tfDets = byTf[app.tf] || [];
+    let dayDets = filterDetectionsByDay(tfDets, app.day);
+    if (prim === 'displacement') {
+      dayDets = dayDets.filter(det => {
+        const g = det.properties && det.properties.quality_grade;
+        return g === 'VALID' || g === 'STRONG' || g === 'DECISIVE';
+      });
+    } else if (prim === 'sweep_continuation') {
+      dayDets = dayDets.filter(det => det.properties && det.properties.type === 'CONTINUATION');
+    } else if (prim === 'liquidity_sweep') {
+      dayDets = dayDets.filter(det => {
+        const t = det.properties && det.properties.type;
+        return t === 'SWEEP';
+      });
+    }
+    result[configName][prim] = dayDets.length;
+  }
+  return result;
+}
+
 function renderDetectionSummary(container) {
-  if (!app.evalData) {
+  if (!app.evalData && !app.weekMode) {
     container.innerHTML = '';
     return;
   }
 
-  const configs = app.evalData.configs || [];
+  let configs;
+  if (app.weekMode && app.weekData && app.weekData.detectionData) {
+    const configName = app.weekData.detectionData.config || 'locked_a8ra_v1';
+    configs = [configName];
+  } else {
+    configs = app.evalData.configs || [];
+  }
   const counts = getDetectionCountsForDay();
 
   let html = '<div class="detection-summary">';
   html += '<div class="detection-summary-header">';
   html += `<span class="summary-title">Detections</span>`;
-  html += `<span class="summary-meta">${app.tf} · ${dayLabel(app.day)}</span>`;
+  html += `<span class="summary-meta">${app.tf} · ${app.day ? dayLabel(app.day) : 'All'}</span>`;
   html += '</div>';
 
   // Table header — include variant name if available
@@ -499,16 +690,25 @@ function renderDetectionSummary(container) {
 function getSessionBandsForDay(dayKey) {
   if (!app.sessionBoundaries) return [];
   const VISIBLE_SESSIONS = new Set(['asia', 'lokz', 'nyokz']);
+  const htfAll = !dayKey && isHTF(app.tf);
   return app.sessionBoundaries
-    .filter(b => b.forex_day === dayKey && VISIBLE_SESSIONS.has(b.session))
-    .map(b => ({
-      startTS: toTS(b.start_time),
-      endTS: toTS(b.end_time),
-      color: b.color,
-      border: b.border,
-      session: b.session,
-      label: b.label,
-    }))
+    .filter(b => VISIBLE_SESSIONS.has(b.session) && (htfAll || b.forex_day === dayKey))
+    .map(b => {
+      let color = b.color;
+      let border = b.border;
+      if (htfAll) {
+        color = color.replace(/[\d.]+\)$/, m => (parseFloat(m) * 0.4).toFixed(2) + ')');
+        border = border.replace(/[\d.]+\)$/, m => (parseFloat(m) * 0.5).toFixed(2) + ')');
+      }
+      return {
+        startTS: toTS(b.start_time),
+        endTS: toTS(b.end_time),
+        color,
+        border,
+        session: b.session,
+        label: b.label,
+      };
+    })
     .filter(b => b.startTS != null && b.endTS != null);
 }
 
@@ -540,6 +740,20 @@ function renderSessionLegend(container) {
 
 function renderDayTabs(container) {
   container.innerHTML = '';
+
+  if (isHTF(app.tf)) {
+    const allBtn = document.createElement('button');
+    allBtn.className = 'chart-day-tab' + (app.day === null ? ' active' : '');
+    allBtn.textContent = 'All';
+    allBtn.addEventListener('click', () => {
+      if (app.day === null) return;
+      app.day = null;
+      renderDayTabs(container);
+      scrollCompareToDay(null);
+    });
+    container.appendChild(allBtn);
+  }
+
   for (const d of DAYS) {
     const btn = document.createElement('button');
     btn.className = 'chart-day-tab' + (d.key === app.day ? ' active' : '');
@@ -549,7 +763,7 @@ function renderDayTabs(container) {
       if (d.key === app.day) return;
       app.day = d.key;
       renderDayTabs(container);
-      refreshChart();
+      scrollCompareToDay(d.key);
     });
     container.appendChild(btn);
   }
@@ -570,10 +784,22 @@ function renderTFButtons(container) {
     btn.dataset.tf = tf;
     btn.addEventListener('click', () => {
       if (tf === app.tf) return;
+      const wasHTF = isHTF(app.tf);
+      const nowHTF = isHTF(tf);
       app.tf = tf;
+
+      if (!wasHTF && nowHTF) {
+        app.day = null;
+      } else if (wasHTF && !nowHTF && !app.day) {
+        app.day = DAY_KEYS.length > 0 ? DAY_KEYS[0] : null;
+      }
+
       renderTFButtons(container);
       // Sync page-level TF buttons
       if (typeof renderCompareTFButtons === 'function') renderCompareTFButtons();
+      // Re-render day tabs (shows/hides "All" tab)
+      const dayTabsEl = document.getElementById('chart-day-tabs');
+      if (dayTabsEl) renderDayTabs(dayTabsEl);
       refreshChart();
     });
     container.appendChild(btn);
@@ -635,9 +861,36 @@ function createLWChart(container) {
   const sessionPrimitive = new SessionBandsPrimitive();
   candleSeries.attachPrimitive(sessionPrimitive);
 
-  // Subscribe to visible range changes to update primitives
-  chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+  // Subscribe to visible range changes
+  chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
     if (sessionPrimitive._requestUpdate) sessionPrimitive._requestUpdate();
+    // Scroll sync
+    if (_cScrollSyncActive || !range || range.from == null || range.to == null) return;
+    const center = Math.floor((range.from + range.to) / 2);
+
+    if (isHTF(app.tf) && _cHTFAllWeeksLoaded && app.weekManifest && app.weekManifest.length > 0) {
+      for (const w of app.weekManifest) {
+        const wStart = toTS(w.start + 'T00:00:00');
+        const wEnd = toTS(w.end + 'T23:59:00');
+        if (center >= wStart && center <= wEnd && w.week !== (app.currentCompareWeek && app.currentCompareWeek.week)) {
+          app.currentCompareWeek = w;
+          const picker = document.getElementById('week-picker-compare');
+          if (picker) picker.value = w.week;
+          break;
+        }
+      }
+      return;
+    }
+
+    if (!app.day) return;
+    for (const dk of DAY_KEYS) {
+      const r = cDayRange(dk);
+      if (center >= r.from && center <= r.to && dk !== app.day) {
+        app.day = dk;
+        highlightCompareDayTab(dk);
+        break;
+      }
+    }
   });
 
   return { chart, candleSeries, sessionPrimitive };
@@ -650,9 +903,33 @@ function createLWChart(container) {
 async function refreshChart() {
   if (!app.chart || !app.candleSeries) return;
 
-  // Load candle data for current day
-  const candleData = await loadCandles(app.day);
-  if (!candleData || !candleData[app.tf]) {
+  let raw;
+
+  if (app.weekMode && app.weekData && app.weekData.candleData) {
+    const candleData = app.weekData.candleData;
+    if (!candleData || !candleData[app.tf]) {
+      app.candleSeries.setData([]);
+      _allMarkers = [];
+      rebuildMarkers();
+      if (_sessionPrimitive) _sessionPrimitive.setBands([]);
+      updateDetectionSummary();
+      return;
+    }
+    // Always load ALL candles (continuous timeline)
+    raw = candleData[app.tf];
+  } else {
+    // Fixture mode: always merge candles from all days
+    const allBars = [];
+    for (const dk of DAY_KEYS) {
+      const cd = await loadCandles(dk);
+      if (cd && cd[app.tf]) {
+        for (const c of cd[app.tf]) allBars.push(c);
+      }
+    }
+    raw = allBars;
+  }
+
+  if (!raw || raw.length === 0) {
     app.candleSeries.setData([]);
     _allMarkers = [];
     rebuildMarkers();
@@ -661,8 +938,6 @@ async function refreshChart() {
     return;
   }
 
-  // Map candle data
-  const raw = candleData[app.tf];
   const data = raw.map(c => ({
     time: toTS(c.time),
     open: c.open,
@@ -674,26 +949,36 @@ async function refreshChart() {
 
   app.candleSeries.setData(data);
 
-  // Build candle time lookup sets
   _candleTimeSet = new Set(data.map(c => c.time));
   _candleTimesArr = data.map(c => c.time);
 
-  // Build all markers (unfiltered) and store
+  // Build markers for ALL days
   _allMarkers = buildMarkers(_candleTimeSet, _candleTimesArr);
-
-  // Apply toggle filters
   rebuildMarkers();
 
-  // Session bands
-  const bands = getSessionBandsForDay(app.day);
+  // Session bands for ALL days
+  let bands;
+  if (app.weekMode && app.weekData && app.weekData.sessionData) {
+    bands = getWeekModeSessionBandsForDay(null);
+  } else {
+    bands = getSessionBandsForDay(null);
+  }
   if (_sessionPrimitive) {
     _sessionPrimitive.setBands(bands);
   }
 
-  // Fit content
-  app.chart.timeScale().fitContent();
+  // Scroll to selected day, or week on HTF, or fit all
+  if (app.day) {
+    scrollCompareToDay(app.day);
+  } else if (isHTF(app.tf) && _cHTFAllWeeksLoaded && app.currentCompareWeek) {
+    _cScrollSyncActive = true;
+    const wr = cWeekRange(app.currentCompareWeek);
+    if (wr) app.chart.timeScale().setVisibleRange(wr);
+    setTimeout(() => { _cScrollSyncActive = false; }, 200);
+  } else {
+    app.chart.timeScale().fitContent();
+  }
 
-  // Force primitive update after layout settles
   requestAnimationFrame(() => {
     if (_sessionPrimitive && _sessionPrimitive._requestUpdate) {
       _sessionPrimitive._requestUpdate();
@@ -705,13 +990,39 @@ async function refreshChart() {
     });
   });
 
-  // Update detection count summary
   updateDetectionSummary();
 
-  // Rebuild ground truth rings after markers rebuild
   if (typeof rebuildGTRings === 'function') {
     setTimeout(() => rebuildGTRings(), 100);
   }
+}
+
+/**
+ * Get session bands for a day in week mode (from weekData.sessionData).
+ */
+function getWeekModeSessionBandsForDay(dayKey) {
+  if (!app.weekData || !app.weekData.sessionData) return [];
+  const VISIBLE_SESSIONS = new Set(['asia', 'lokz', 'nyokz']);
+  const htfAll = !dayKey && isHTF(app.tf);
+  return app.weekData.sessionData
+    .filter(b => VISIBLE_SESSIONS.has(b.session) && (htfAll || b.forex_day === dayKey))
+    .map(b => {
+      let color = b.color;
+      let border = b.border;
+      if (htfAll) {
+        color = color.replace(/[\d.]+\)$/, m => (parseFloat(m) * 0.4).toFixed(2) + ')');
+        border = border.replace(/[\d.]+\)$/, m => (parseFloat(m) * 0.5).toFixed(2) + ')');
+      }
+      return {
+        startTS: toTS(b.start_time),
+        endTS: toTS(b.end_time),
+        color,
+        border,
+        session: b.session,
+        label: b.label,
+      };
+    })
+    .filter(b => b.startTS != null && b.endTS != null);
 }
 
 /**
@@ -735,6 +1046,22 @@ function updateDetectionSummary() {
  */
 function renderVariantSelector(container) {
   if (!container) return;
+
+  // In week mode, show week info instead of fixture selector
+  if (app.weekMode && app.currentCompareWeek) {
+    container.style.display = '';
+    const w = app.currentCompareWeek;
+    container.innerHTML = `
+      <span class="toggle-group-label">Week Mode</span>
+      <div class="variant-info-row" style="color:var(--yellow);">
+        <span class="variant-info-label">${w.week} (${w.start} → ${w.end})</span>
+      </div>
+      <div class="variant-info-row">
+        <span class="variant-info-label">${w.detection_count.toLocaleString()} detections</span>
+      </div>
+    `;
+    return;
+  }
 
   const fixtures = typeof getAvailableFixtures === 'function' ? getAvailableFixtures() : [];
   const hasMultipleFixtures = fixtures.length > 1;
@@ -797,12 +1124,18 @@ function renderVariantSelector(container) {
  * Render config/variant color legend in the controls bar.
  */
 function renderConfigLegend(container) {
-  if (!container || !app.evalData) {
-    if (container) container.innerHTML = '';
+  if (!container) return;
+
+  let configs;
+  if (app.weekMode && app.weekData && app.weekData.detectionData) {
+    const configName = app.weekData.detectionData.config || 'locked_a8ra_v1';
+    configs = [configName];
+  } else if (app.evalData) {
+    configs = app.evalData.configs || [];
+  } else {
+    container.innerHTML = '';
     return;
   }
-
-  const configs = app.evalData.configs || [];
   let html = '<div class="config-legend">';
   for (let ci = 0; ci < configs.length; ci++) {
     const cfgName = configs[ci];
